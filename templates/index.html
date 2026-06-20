@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+
+{% block title %}股票K线图查询{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-search"></i> 查询股票</h5>
+            </div>
+            <div class="card-body">
+                <form id="searchForm" onsubmit="return false;">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-5">
+                            <label for="stockName" class="form-label">股票名称或代码</label>
+                            <div class="position-relative">
+                                <input type="text" class="form-control" id="stockName"
+                                       placeholder="请输入股票名称或代码，如：平安银行、000001"
+                                       value="平安银行" autocomplete="off">
+                                <div id="suggestions" class="list-group" style="display:none; position:absolute; z-index:1000; width:100%; max-height:200px; overflow-y:auto;"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="queryTime" class="form-label">查询天数</label>
+                            <select class="form-select" id="queryTime">
+                                <option value="30">近30天</option>
+                                <option value="60">近60天</option>
+                                <option value="120">近120天</option>
+                                <option value="250" selected>近250天</option>
+                                <option value="500">近500天</option>
+                                <option value="1000">近1000天</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <button type="button" class="btn btn-primary w-100" onclick="loadKline()">
+                                <i class="fas fa-chart-bar"></i> 查看K线图
+                            </button>
+                        </div>
+                    </div>
+                </form>
+                <div id="errorMessage" class="error-message"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5><i class="fas fa-candlestick-chart"></i> K线图</h5>
+                <span id="stockInfo" class="badge bg-light text-dark">加载中...</span>
+            </div>
+            <div class="card-body">
+                <div id="kline-container">
+                    <div class="loading-text">
+                        <i class="fas fa-spinner fa-spin fa-2x"></i>
+                        <p class="mt-2">加载中，请稍候...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var chartInstance = null;
+
+$(document).ready(function() {
+    var suggestionTimeout;
+    $('#stockName').on('input', function() {
+        clearTimeout(suggestionTimeout);
+        var keyword = $(this).val().trim();
+        if (keyword.length < 1) {
+            $('#suggestions').hide();
+            return;
+        }
+
+        suggestionTimeout = setTimeout(function() {
+            $.ajax({
+                url: '/api/suggest',
+                method: 'GET',
+                data: { keyword: keyword },
+                success: function(data) {
+                    if (data.length > 0) {
+                        var html = '';
+                        data.forEach(function(item) {
+                            html += '<a href="#" class="list-group-item list-group-item-action suggestion-item"'
+                                  + ' data-code="' + item.code + '" data-name="' + item.name + '">'
+                                  + '<strong>' + item.code + '</strong> - ' + item.name + '</a>';
+                        });
+                        $('#suggestions').html(html).show();
+                    } else {
+                        $('#suggestions').hide();
+                    }
+                }
+            });
+        }, 300);
+    });
+
+    $('#suggestions').on('click', '.suggestion-item', function(e) {
+        e.preventDefault();
+        var code = $(this).data('code');
+        var name = $(this).data('name');
+        $('#stockName').val(name);
+        $('#suggestions').hide();
+        loadKline();
+    });
+
+    $(document).click(function(e) {
+        if (!$(e.target).closest('#stockName').length && !$(e.target).closest('#suggestions').length) {
+            $('#suggestions').hide();
+        }
+    });
+
+    $('#stockName, #queryTime').on('keypress', function(e) {
+        if (e.which === 13) {
+            loadKline();
+        }
+    });
+
+    loadKline();
+});
+
+function loadKline() {
+    var stockName = $('#stockName').val().trim() || '平安银行';
+    var queryTime = $('#queryTime').val();
+
+    $('#kline-container').html('<div class="loading-text"><i class="fas fa-spinner fa-spin fa-2x"></i><p class="mt-2">加载中，请稍候...</p></div>');
+    $('#errorMessage').hide();
+    $('#stockInfo').text('加载中...');
+
+    if (chartInstance) {
+        chartInstance.dispose();
+        chartInstance = null;
+    }
+
+    $.ajax({
+        url: '/api/kline',
+        method: 'POST',
+        data: {
+            stockName: stockName,
+            queryTime: queryTime
+        },
+        success: function(data) {
+            if (data.error) {
+                showError(data.error);
+                return;
+            }
+
+            var container = document.getElementById('kline-container');
+            chartInstance = echarts.init(container);
+            chartInstance.setOption(data);
+
+            var title = data.title && data.title.text ? data.title.text : stockName;
+            $('#stockInfo').text(title);
+
+            window.addEventListener('resize', function() {
+                if (chartInstance) {
+                    chartInstance.resize();
+                }
+            });
+        },
+        error: function(xhr) {
+            var errorMsg = '查询失败，请稍后重试';
+            if (xhr.responseJSON && xhr.responseJSON.error) {
+                errorMsg = xhr.responseJSON.error;
+            }
+            showError(errorMsg);
+        }
+    });
+}
+
+function showError(message) {
+    $('#errorMessage').text(message).show();
+    $('#kline-container').html('<div class="loading-text" style="color:#dc3545;">'
+        + '<i class="fas fa-exclamation-circle fa-2x"></i>'
+        + '<p class="mt-2">' + message + '</p></div>');
+    $('#stockInfo').text('查询失败');
+}
+
+function refreshChart() {
+    loadKline();
+}
+</script>
+{% endblock %}
